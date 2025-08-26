@@ -1,0 +1,217 @@
+# src/ui_html.py
+import streamlit as st
+import pandas as pd
+from pandas.tseries.offsets import DateOffset
+from typing import Tuple, Dict
+from src.utils import to_excel
+import base64
+import streamlit.components.v1 as components # Import component HTML
+import datetime # Thêm thư viện datetime
+
+# Hàm setup_sidebar và create_download_link_html giữ nguyên như cũ
+def setup_sidebar() -> Tuple[DateOffset, str]:
+    """
+    Cài đặt và hiển thị các widget trong sidebar, bao gồm cả tùy chọn tùy chỉnh ngày.
+    """
+    st.sidebar.header("⚙️ Tùy chọn Phân tích")
+    
+    # THÊM LẠI TÙY CHỌN 'Tùy chỉnh'
+    period_options = {
+        '3 tháng': (DateOffset(months=3), '3T'),
+        '6 tháng': (DateOffset(months=6), '6T'),
+        '1 năm': (DateOffset(months=12), '1Y'),
+        'Tùy chỉnh': (None, 'Custom') # Thêm lại tùy chọn này
+    }
+    
+    # Mặc định vẫn là '6 tháng'
+    selected_period = st.sidebar.selectbox(
+        "Chọn khoảng thời gian tính hiệu suất:",
+        options=list(period_options.keys()),
+        index=1
+    )
+    
+    period_offset, period_label = period_options[selected_period]
+
+    # THÊM LẠI LOGIC XỬ LÝ CHO KHOẢNG THỜI GIAN TÙY CHỈNH
+    if selected_period == 'Tùy chỉnh':
+        today = datetime.date.today()
+        # Mặc định khoảng thời gian là 6 tháng gần nhất
+        default_start = today - datetime.timedelta(days=180)
+        
+        start_date = st.sidebar.date_input("Ngày bắt đầu", default_start)
+        end_date = st.sidebar.date_input("Ngày kết thúc", today)
+        
+        if start_date >= end_date:
+            st.sidebar.error("Ngày bắt đầu phải trước ngày kết thúc.")
+            # Trả về giá trị mặc định (6 tháng) để tránh lỗi
+            return period_options['6 tháng']
+        
+        # Tính toán khoảng chênh lệch thời gian
+        delta = end_date - start_date
+        period_offset = DateOffset(days=delta.days)
+        period_label = f'{delta.days}D' # Nhãn sẽ hiển thị số ngày
+
+    return period_offset, period_label
+
+def create_download_link_html(df_dict: dict, filename: str, link_text: str) -> str:
+    excel_data = to_excel(df_dict)
+    b64 = base64.b64encode(excel_data).decode()
+    return f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}" class="download-button">{link_text}</a>'
+
+
+def display_results_html(results: Dict[str, pd.DataFrame], summary_df: pd.DataFrame, period_label: str):
+    """
+    Hiển thị kết quả phân tích, tùy chỉnh độ rộng cột cho các bảng chi tiết.
+    """
+    
+    # --- Các hàm và logic xử lý DataFrame (không đổi) ---
+    # ... (phần code này giữ nguyên) ...
+    def style_rating(val):
+        color = ''
+        if val == 'Outperform': color = '#D4EDDA'
+        elif val == 'Underperform': color = '#F8D7DA'
+        return f'background-color: {color}'
+
+    def style_win_rate(val):
+        color = ''
+        if isinstance(val, str) and '%' in val:
+            try:
+                num_val = float(val.split(' ')[0].strip('%'))
+                if num_val > 50: color = '#D4EDDA'
+                elif num_val < 50: color = '#F8D7DA'
+            except (ValueError, TypeError): pass
+        return f'background-color: {color}'
+
+    if not summary_df.empty:
+        win_rate_cols = summary_df.columns.drop('Win Rate')
+        summary_styler = summary_df.style.apply(lambda x: x.map(style_win_rate), subset=win_rate_cols)
+        summary_html = summary_styler.hide(axis="index").to_html(embed_css=True)
+    else:
+        summary_html = "<p>Không có đủ dữ liệu để tạo bảng thống kê Win Rate.</p>"
+
+    results_html = {}
+    for name, df in results.items():
+        if not df.empty:
+            numeric_cols = [col for col in df.columns if 'Hiệu suất' in col or 'vs VNINDEX' in col]
+            styler = df.style.map(style_rating, subset=['Rating'])
+            styler.set_properties(**{'text-align': 'right'}, subset=numeric_cols)
+            results_html[name] = styler.hide(axis="index").to_html(embed_css=True)
+        else:
+            results_html[name] = f"<p>Không có dữ liệu cho mục này.</p>"
+            
+    dfs_for_export = {"Thong_ke_Win_Rate": summary_df, **results}
+    download_filename = f"ket_qua_loc_co_phieu_{period_label}.xlsx"
+    download_button_html = create_download_link_html(dfs_for_export, download_filename, "📁 Tải file Excel")
+
+
+    # --- Mã HTML và CSS ---
+    html_template = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <style>
+        .container {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            width: 100%;
+        }}
+        h3, h4 {{
+            color: #0d3b66;
+            border-bottom: 2px solid #f4d35e;
+            padding-bottom: 5px;
+            margin-top: 25px;
+        }}
+        h4 > a {{
+            text-decoration: none;
+            color: inherit;
+        }}
+        .grid-container {{
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }}
+        .grid-item {{
+            width: 100%;
+        }}
+        .table-container {{
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.75em;
+            table-layout: fixed; /* Giúp CSS width hoạt động ổn định */
+        }}
+        th, td {{
+            padding: 6px 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+            word-wrap: break-word; /* Chống vỡ layout nếu nội dung quá dài */
+        }}
+        th {{
+            background-color: #f2f2f2;
+            position: sticky;
+            top: 0;
+        }}
+        .winrate-table table th, .winrate-table table td {{
+            text-align: right;
+        }}
+        .winrate-table table th:first-child, .winrate-table table td:first-child {{
+            text-align: left;
+        }}
+        .download-section {{
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 1px solid #ccc;
+        }}
+        .download-button {{ /* ... */ }}
+
+        /* >>> THÊM MỚI: CSS ĐỂ TÙY CHỈNH ĐỘ RỘNG CỘT <<< */
+        .table-container th:nth-child(1), .table-container td:nth-child(1) {{ width: 13%; }} /* Cổ phiếu */
+        .table-container th:nth-child(2), .table-container td:nth-child(2) {{ width: 18%; }} /* Ngày */
+        .table-container th:nth-child(3), .table-container td:nth-child(3) {{ width: 15%; }} /* Hiệu suất CP */
+        .table-container th:nth-child(4), .table-container td:nth-child(4) {{ width: 15%; }} /* Hiệu suất VNINDEX */
+        .table-container th:nth-child(5), .table-container td:nth-child(5) {{ width: 15%; }} /* vs VNINDEX */
+        .table-container th:nth-child(6), .table-container td:nth-child(6) {{ width: 20%; }} /* Rating */
+
+    </style>
+    </head>
+    <body>
+    <div class="container">
+        <h3>📊 Win Rate</h3>
+        <div class="winrate-table">
+            {summary_html}
+        </div>
+
+        
+        <div class="grid-container">
+            <div class="grid-item">
+                <h4>📉 OUTPERFORM to MARKET-PERFORM</h4>
+                <div class="table-container">{results_html["Out_sang_MarketPerform"]}</div>
+            </div>
+            <div class="grid-item">
+                <h4>🚀 MARKET-PERFORM to OUTPERFORM</h4>
+                <div class="table-container">{results_html["MarketPerform_sang_Out"]}</div>
+            </div>
+            <div class="grid-item">
+                <h4>✅ Khuyến nghị BUY</h4>
+                <div class="table-container">{results_html["Khuyen_nghi_BUY"]}</div>
+            </div>
+            <div class="grid-item">
+                <h4>⚠️ Khuyến nghị UNDER-PERFORM</h4>
+                <div class="table-container">{results_html["Khuyen_nghi_UnderPerform"]}</div>
+            </div>
+        </div>
+        
+        <div class="download-section">
+            <h3>📥 Tải xuống kết quả</h3>
+            {download_button_html}
+        </div>
+    </div>
+    </body>
+    </html>
+    """
+
+    # --- Lệnh hiển thị (không đổi) ---
+    components.html(html_template, height=1800)
