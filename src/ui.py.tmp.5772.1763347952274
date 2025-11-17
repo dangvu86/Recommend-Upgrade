@@ -15,10 +15,12 @@ def setup_sidebar() -> Tuple[DateOffset, str]:
     """
     st.sidebar.header("⚙️ Tùy chọn Phân tích")
 
+    # THÊM LẠI TÙY CHỌN 'Tùy chỉnh'
     period_options = {
         '3 tháng': (DateOffset(months=3), '3T'),
         '6 tháng': (DateOffset(months=6), '6T'),
-        '1 năm': (DateOffset(months=12), '1Y')
+        '1 năm': (DateOffset(months=12), '1Y'),
+        'Tùy chỉnh': (None, 'Custom') # Thêm lại tùy chọn này
     }
 
     # Mặc định vẫn là '6 tháng'
@@ -29,6 +31,25 @@ def setup_sidebar() -> Tuple[DateOffset, str]:
     )
 
     period_offset, period_label = period_options[selected_period]
+
+    # THÊM LẠI LOGIC XỬ LÝ CHO KHOẢNG THỜI GIAN TÙY CHỈNH
+    if selected_period == 'Tùy chỉnh':
+        today = datetime.date.today()
+        # Mặc định khoảng thời gian là 6 tháng gần nhất
+        default_start = today - datetime.timedelta(days=180)
+
+        start_date = st.sidebar.date_input("Ngày bắt đầu", default_start)
+        end_date = st.sidebar.date_input("Ngày kết thúc", today)
+
+        if start_date >= end_date:
+            st.sidebar.error("Ngày bắt đầu phải trước ngày kết thúc.")
+            # Trả về giá trị mặc định (6 tháng) để tránh lỗi
+            return period_options['6 tháng']
+
+        # Tính toán khoảng chênh lệch thời gian
+        delta = end_date - start_date
+        period_offset = DateOffset(days=delta.days)
+        period_label = f'{delta.days}D' # Nhãn sẽ hiển thị số ngày
 
     # Thêm chú thích về cách xác định Win Rate
     st.sidebar.markdown("---")
