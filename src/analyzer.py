@@ -138,18 +138,40 @@ def process_stock_data(df_rec: pd.DataFrame, df_price: pd.DataFrame, period_offs
 
     return df_list1, df_list2, df_list3, df_list4
 
+def _parse_percentage(val: str) -> float:
+    """
+    Parse giá trị phần trăm từ string sang float.
+    Ví dụ: "-3.25%" -> -0.0325, "5.80%" -> 0.058
+    """
+    try:
+        if isinstance(val, str) and '%' in val:
+            return float(val.replace('%', '').strip()) / 100
+        return float('nan')
+    except (ValueError, TypeError):
+        return float('nan')
+
+
 def calculate_win_rate_summary(data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     """
-    Tạo bảng thống kê Win Rate theo năm từ các DataFrame kết quả.
+    Tạo bảng thống kê Win Rate và Avg Alpha theo năm từ các DataFrame kết quả.
+    Trả về DataFrame với MultiIndex columns để hiển thị header 2 tầng.
 
     Args:
         data_dict (Dict[str, pd.DataFrame]): Từ điển chứa các DataFrame kết quả.
 
     Returns:
-        pd.DataFrame: Bảng thống kê Win Rate.
+        pd.DataFrame: Bảng thống kê Win Rate kèm Avg Alpha với header 2 tầng.
     """
     all_years = set()
     dfs_copy = {}
+    
+    # Tên hiển thị ngắn gọn hơn
+    display_names = {
+        'Out_sang_MarketPerform': 'Out → MP',
+        'MarketPerform_sang_Out': 'MP → Out', 
+        'Khuyen_nghi_BUY': 'BUY',
+        'Khuyen_nghi_UnderPerform': 'UNDER'
+    }
     
     # Chuẩn bị dữ liệu và thu thập tất cả các năm có dữ liệu
     for name, df in data_dict.items():
@@ -164,16 +186,26 @@ def calculate_win_rate_summary(data_dict: Dict[str, pd.DataFrame]) -> pd.DataFra
         return pd.DataFrame()
 
     years = sorted(list(all_years))
+    
+    # Tạo cấu trúc dữ liệu cho MultiIndex columns
     summary_data = {}
 
     for name, (df, date_col) in dfs_copy.items():
+        display_name = display_names.get(name, name)
         win_rates = []
+        alphas = []
+        
         if not df.empty and 'Rating' in df.columns:
-            df_filtered = df[df['Rating'] != 'N/A']
+            df_filtered = df[df['Rating'] != 'N/A'].copy()
+            
+            # Tìm cột vs VNINDEX
+            vs_vnindex_col = next((col for col in df_filtered.columns if 'vs VNINDEX' in col), None)
+            
+            # Parse giá trị Alpha từ string sang số
+            if vs_vnindex_col:
+                df_filtered['Alpha_Numeric'] = df_filtered[vs_vnindex_col].apply(_parse_percentage)
 
-            # Xác định xem có cần đếm Underperform hay Outperform
-            # Với Out_sang_MarketPerform và Khuyen_nghi_UnderPerform: đếm Underperform
-            # Với các cột khác: đếm Outperform
+            # Xác định target rating
             target_rating = 'Underperform' if name in ['Out_sang_MarketPerform', 'Khuyen_nghi_UnderPerform'] else 'Outperform'
 
             for year in years:
@@ -182,22 +214,49 @@ def calculate_win_rate_summary(data_dict: Dict[str, pd.DataFrame]) -> pd.DataFra
                 if total > 0:
                     wins = len(year_df[year_df['Rating'] == target_rating])
                     rate = wins / total
-                    win_rates.append(f"{rate:.2%} ({wins}/{total})")
+                    win_rates.append(f"{rate:.0%} ({wins}/{total})")
+                    
+                    # Tính Avg Alpha
+                    if vs_vnindex_col and 'Alpha_Numeric' in year_df.columns:
+                        avg_alpha = year_df['Alpha_Numeric'].mean()
+                        if not pd.isna(avg_alpha):
+                            alphas.append(f"{avg_alpha:+.1%}")
+                        else:
+                            alphas.append('—')
+                    else:
+                        alphas.append('—')
                 else:
-                    win_rates.append('N/A')
+                    win_rates.append('—')
+                    alphas.append('—')
 
             # Tính tổng cộng
             total_all_time = len(df_filtered)
             if total_all_time > 0:
                 wins_all_time = len(df_filtered[df_filtered['Rating'] == target_rating])
                 total_rate = wins_all_time / total_all_time
-                win_rates.append(f"{total_rate:.2%} ({wins_all_time}/{total_all_time})")
+                win_rates.append(f"{total_rate:.0%} ({wins_all_time}/{total_all_time})")
+                
+                if vs_vnindex_col and 'Alpha_Numeric' in df_filtered.columns:
+                    avg_alpha_total = df_filtered['Alpha_Numeric'].mean()
+                    if not pd.isna(avg_alpha_total):
+                        alphas.append(f"{avg_alpha_total:+.1%}")
+                    else:
+                        alphas.append('—')
+                else:
+                    alphas.append('—')
             else:
-                win_rates.append('N/A')
-            summary_data[name] = win_rates
+                win_rates.append('—')
+                alphas.append('—')
+                
+            summary_data[(display_name, 'WinRate')] = win_rates
+            summary_data[(display_name, 'Alpha')] = alphas
         else:
-            summary_data[name] = ['N/A'] * (len(years) + 1)
+            summary_data[(display_name, 'WinRate')] = ['—'] * (len(years) + 1)
+            summary_data[(display_name, 'Alpha')] = ['—'] * (len(years) + 1)
 
+    # Tạo DataFrame với MultiIndex columns
     summary_df = pd.DataFrame(summary_data, index=[str(y) for y in years] + ['Total'])
-    summary_df.index.name = 'Win Rate'
+    summary_df.columns = pd.MultiIndex.from_tuples(summary_df.columns)
+    summary_df.index.name = 'Năm'
+    
     return summary_df.reset_index()

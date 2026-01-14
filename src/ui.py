@@ -67,33 +67,110 @@ def create_download_link_html(df_dict: dict, filename: str, link_text: str) -> s
 
 def display_results_html(results: Dict[str, pd.DataFrame], summary_df: pd.DataFrame, period_label: str):
     """
-    Hiển thị kết quả phân tích, tùy chỉnh độ rộng cột cho các bảng chi tiết.
+    Hiển thị kết quả phân tích với bảng Win Rate header 2 tầng và styling đẹp.
     """
     
-    # --- Các hàm và logic xử lý DataFrame (không đổi) ---
-    # ... (phần code này giữ nguyên) ...
+    # --- Styling functions ---
     def style_rating(val):
         color = ''
         if val == 'Outperform': color = '#D4EDDA'
         elif val == 'Underperform': color = '#F8D7DA'
         return f'background-color: {color}'
 
-    def style_win_rate(val):
-        color = ''
+    def style_win_rate_cell(val):
+        """Style cho ô win rate (tô màu theo % > 50 hoặc < 50)"""
         if isinstance(val, str) and '%' in val:
             try:
-                num_val = float(val.split(' ')[0].strip('%'))
-                if num_val > 50: color = '#D4EDDA'
-                elif num_val < 50: color = '#F8D7DA'
-            except (ValueError, TypeError): pass
-        return f'background-color: {color}'
+                num_val = float(val.split('%')[0].strip())
+                if num_val > 50: return 'background-color: #D4EDDA; color: #155724;'
+                elif num_val < 50: return 'background-color: #F8D7DA; color: #721c24;'
+            except: pass
+        return ''
 
-    if not summary_df.empty:
-        win_rate_cols = summary_df.columns.drop('Win Rate')
-        summary_styler = summary_df.style.apply(lambda x: x.map(style_win_rate), subset=win_rate_cols)
-        summary_html = summary_styler.hide(axis="index").to_html(embed_css=True)
-    else:
-        summary_html = "<p>Không có đủ dữ liệu để tạo bảng thống kê Win Rate.</p>"
+    def style_alpha_cell(val):
+        """Style cho ô alpha (tô màu theo dấu + hoặc -)"""
+        if isinstance(val, str):
+            if val.startswith('+'): return 'background-color: #D4EDDA; color: #155724;'
+            elif val.startswith('-'): return 'background-color: #F8D7DA; color: #721c24;'
+        return ''
+
+    # --- Tạo HTML cho bảng Win Rate với header 2 tầng ---
+    def create_summary_table_html(df: pd.DataFrame) -> str:
+        if df.empty:
+            return "<p>Không có đủ dữ liệu để tạo bảng thống kê.</p>"
+        
+        # Lấy thông tin cột
+        if isinstance(df.columns, pd.MultiIndex):
+            level0 = df.columns.get_level_values(0).unique().tolist()
+            if 'Năm' in level0:
+                level0.remove('Năm')
+        else:
+            # Fallback nếu không phải MultiIndex
+            return df.to_html(index=False)
+        
+        # Màu sắc cho từng loại khuyến nghị
+        colors = {
+            'Out → MP': ('#e74c3c', '#fadbd8'),  # Đỏ
+            'MP → Out': ('#27ae60', '#d5f5e3'),  # Xanh lá
+            'BUY': ('#3498db', '#d6eaf8'),        # Xanh dương
+            'UNDER': ('#f39c12', '#fdebd0')       # Cam
+        }
+        
+        html = '''
+        <table class="summary-table">
+            <thead>
+                <tr class="header-row-1">
+                    <th rowspan="2" class="year-header" style="text-align: center;">NĂM</th>
+        '''
+        
+        # Header row 1: Tên loại khuyến nghị
+        for cat in level0:
+            bg_color, _ = colors.get(cat, ('#6c757d', '#e9ecef'))
+            html += f'<th colspan="2" style="background: {bg_color}; color: white; text-align: center;">{cat}</th>'
+        
+        html += '</tr><tr class="header-row-2">'
+        
+        # Header row 2: WinRate | Avg Alpha
+        for cat in level0:
+            _, light_color = colors.get(cat, ('#6c757d', '#e9ecef'))
+            html += f'<th style="background: {light_color}; text-align: center;">WinRate</th>'
+            html += f'<th style="background: {light_color}; text-align: center;">Avg Alpha</th>'
+        
+        html += '</tr></thead><tbody>'
+        
+        # Data rows
+        for idx, row in df.iterrows():
+            is_total = row.iloc[0] == 'Total'
+            row_class = 'total-row' if is_total else ''
+            html += f'<tr class="{row_class}">'
+            
+            # Cột Năm
+            year_val = row.iloc[0]
+            html += f'<td class="year-cell">{year_val}</td>'
+            
+            # Các cột dữ liệu
+            col_idx = 1
+            for cat in level0:
+                winrate_val = row.iloc[col_idx] if col_idx < len(row) else '—'
+                alpha_val = row.iloc[col_idx + 1] if col_idx + 1 < len(row) else '—'
+                
+                # Style cho WinRate
+                wr_style = style_win_rate_cell(winrate_val)
+                html += f'<td style="{wr_style}">{winrate_val}</td>'
+                
+                # Style cho Alpha
+                alpha_style = style_alpha_cell(alpha_val)
+                html += f'<td style="{alpha_style}">{alpha_val}</td>'
+                
+                col_idx += 2
+            
+            html += '</tr>'
+        
+        html += '</tbody></table>'
+        return html
+
+    # Tạo HTML cho bảng summary
+    summary_html = create_summary_table_html(summary_df)
 
     results_html = {}
     for name, df in results.items():
@@ -166,14 +243,86 @@ def display_results_html(results: Dict[str, pd.DataFrame], summary_df: pd.DataFr
         .winrate-table table th:first-child, .winrate-table table td:first-child {{
             text-align: left;
         }}
+        .download-button {{ /* ... */ }}
+
+        /* === STYLING CHO BẢNG WIN RATE HEADER 2 TẦNG === */
+        .summary-table {{
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-size: 0.85em;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }}
+        
+        .summary-table th {{
+            padding: 12px 10px;
+            text-align: center;
+            font-weight: 600;
+            border: none;
+            position: sticky;
+        }}
+        
+        .summary-table .header-row-1 th {{
+            font-size: 1.1em;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }}
+        
+        .summary-table .header-row-2 th {{
+            font-size: 0.85em;
+            font-weight: 500;
+            color: #333;
+        }}
+        
+        .summary-table .year-header {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            vertical-align: middle;
+        }}
+        
+        .summary-table td {{
+            padding: 10px 12px;
+            text-align: center;
+            border-bottom: 1px solid #eee;
+            transition: background-color 0.2s ease;
+        }}
+        
+        .summary-table tbody tr:hover {{
+            background-color: #f8f9fa;
+        }}
+        
+        .summary-table .year-cell {{
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea20 0%, #764ba220 100%);
+            color: #4a4a4a;
+        }}
+        
+        .summary-table .total-row {{
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+        }}
+        
+        .summary-table .total-row td {{
+            color: white;
+            font-weight: 700;
+            border-bottom: none;
+        }}
+        
+        .summary-table .total-row .year-cell {{
+            background: linear-gradient(135deg, #1a252f 0%, #2c3e50 100%);
+            color: #f8f9fa;
+        }}
+
         .download-section {{
             margin-top: 30px;
             padding-top: 15px;
             border-top: 1px solid #ccc;
         }}
-        .download-button {{ /* ... */ }}
 
-        /* >>> THÊM MỚI: CSS ĐỂ TÙY CHỈNH ĐỘ RỘNG CỘT <<< */
+        /* === CSS ĐỂ TÙY CHỈNH ĐỘ RỘNG CỘT CHI TIẾT === */
         .table-container th:nth-child(1), .table-container td:nth-child(1) {{ width: 13%; }} /* Cổ phiếu */
         .table-container th:nth-child(2), .table-container td:nth-child(2) {{ width: 18%; }} /* Ngày */
         .table-container th:nth-child(3), .table-container td:nth-child(3) {{ width: 15%; }} /* Hiệu suất CP */

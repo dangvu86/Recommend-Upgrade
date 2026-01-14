@@ -18,7 +18,11 @@ def to_excel(dfs_dict: dict) -> bytes:
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         for sheet_name, df in dfs_dict.items():
             # Nếu df là một đối tượng Styler của pandas, ta cần lấy dữ liệu gốc
-            df_to_write = df.data if hasattr(df, 'data') else df
+            df_to_write = df.data.copy() if hasattr(df, 'data') else df.copy()
+            
+            # Xử lý MultiIndex columns - flatten thành single level
+            if isinstance(df_to_write.columns, pd.MultiIndex):
+                df_to_write.columns = [f"{col[0]}_{col[1]}" if col[1] else col[0] for col in df_to_write.columns]
             
             # Xử lý các cột datetime để không bị ảnh hưởng bởi múi giờ khi ghi ra Excel
             for col in df_to_write.columns:
